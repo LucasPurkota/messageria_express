@@ -1,5 +1,7 @@
 {
   "dependencies": {
+    "amqp": "^0.2.7",
+    "amqplib": "^0.10.8",
     "express": "^5.1.0"
   }
 }
