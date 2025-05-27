@@ -1,8 +1,8 @@
-const { sendMessage } = require('../services/messageService');
+const { sendMessageService } = require('../services/messageService');
 
-exports.sendMessage = (req, res) => {
+exports.sendMessageController = (req, res) => {
 
-  sendMessage(req.body.message, req.body.receiverId);
+  sendMessageService(req.body.message, req.body.senderId, req.body.receiverId);
   
   res.status(200).json({
     message: "Message sent successfully"
@@ -11,6 +11,6 @@ exports.sendMessage = (req, res) => {
 
 exports.receiveMessage = (req, res) => {
   res.status(200).json({
-    message: "Message sent successfully"
+    message: "Message received successfully"
   });
 }

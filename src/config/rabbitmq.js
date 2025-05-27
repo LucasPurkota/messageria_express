@@ -8,9 +8,9 @@ function connectRabbitMQ(callback) {
     connection.createChannel((error1, channel) => {
       if (error1) return callback(error1);
       
-      callback(null, { channel, queue });
+      callback(null, channel);
     });
   });
 }
 
-module.exports = connectRabbitMQ;
+module.exports = {connectRabbitMQ};
