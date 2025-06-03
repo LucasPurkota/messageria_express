@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { sendMessageController, receiveMessage } = require('../controllers/messageController');
 
-router.post('/send', sendMessageController);
-router.post('/receive', receiveMessage);
+router.post('/message', sendMessageController);
+router.post('/message/worker', receiveMessage);
 
 module.exports = router;
