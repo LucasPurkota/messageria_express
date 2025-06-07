@@ -1,8 +1,12 @@
 FROM node:18-alpine
 
 WORKDIR /app
-COPY app.js .
-RUN npm install express
+
+COPY package*.json ./
+
+RUN npm install
+
+COPY src/ .
 
 EXPOSE 3001
 

@@ -57,7 +57,7 @@ exports.sendMessageController = async (req, res) => {
   }
 };
 
-exports.receiveMessage = async (req, res) => {
+exports.receiveMessageController = async (req, res) => {
   try {
 
     const token = req.headers.authorization?.replace("Bearer ", "");

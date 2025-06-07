@@ -1,4 +1,4 @@
-exports.receiveMessage = (res) => {
+exports.healthController = (req, res) => {
   res.status(200).json({
     message: "Service is running"
   });
