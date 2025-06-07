@@ -1,136 +1,214 @@
-const { connectRabbitMQ } = require('../config/rabbitmq');
-const axios = require('axios');
-const { createClient } = require('redis');
+const { connectRabbitMQ } = require("../config/rabbitmq");
+const axios = require("axios");
+const { createClient } = require("redis");
 let redisClient;
 
-// Criar e conectar o cliente Redis
 (async () => {
   redisClient = createClient();
-  redisClient.on('error', (err) => console.error('Redis Client Error', err));
+  redisClient.on("error", (err) => console.error("Redis Client Error", err));
   await redisClient.connect();
 })();
 
-function sendMessageService(message, userIdSend, userIdReceive) {
-  connectRabbitMQ((error, channel) => {
-    if (error) {
-      console.error('Erro no Producer:', error);
-      return;
+async function autenticateUser(token) {
+  const redisKey = `auth:${token}`;
+
+  try {
+    let cachedData = await redisClient.get(redisKey);
+    let authData = cachedData ? JSON.parse(cachedData) : null;
+
+    if (!authData) {
+      const response = await axios.get("http://localhost:8081/users/fetch", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 5000,
+      });
+
+      authData = response.data;
+
+      await redisClient.set(redisKey, JSON.stringify(authData), {
+        EX: 120,
+        NX: true,
+      });
     }
-    const queueName = `${userIdSend}_${userIdReceive}`;
-    
-    channel.assertQueue(queueName, { durable: true });
-    channel.sendToQueue(queueName, Buffer.from(message));
-    console.log(`[Producer] Mensagem enviada para ${queueName}: ${message}`);
-  });
+
+    if (!authData?.success) {
+      return { success: false, error: "Usuário não autenticado" };
+    }
+
+    return { success: true, data: authData };
+  } catch (error) {
+
+    if (error.message.includes("Autenticação falhou")) {
+      await redisClient.del(redisKey);
+    }
+
+    return {
+      success: false,
+      error: error.response?.data?.message || error.message,
+    };
+  }
+}
+
+async function sendMessageService(message, userIdSend, userIdReceive, token) {
+  try {
+    const authenticator = await autenticateUser(token);
+    if (!authenticator.success) {
+      return { success: false, error: "Usuário não autenticado" };
+    }
+
+    const result = await new Promise((resolve, reject) => {
+      connectRabbitMQ((error, channel) => {
+        if (error) {
+          return reject({ success: false, error: "Erro no RabbitMQ" });
+        }
+
+        const queueName = `${userIdSend}_${userIdReceive}`;
+
+        channel.assertQueue(queueName, { durable: true });
+        channel.sendToQueue(queueName, Buffer.from(JSON.stringify(message)), {
+          persistent: true,
+        });
+
+        resolve({ success: true, data: "Mensagem enviada com sucesso" });
+      });
+    });
+
+    return result;
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message || "Erro ao enviar mensagem",
+    };
+  }
 }
 
 async function callMessageAPI(messageData) {
   try {
-    const response = await axios.post('http://localhost:8000/messages', messageData);
-    console.log('Mensagem enviada para API com sucesso:', response.data);
+    const response = await axios.post(
+      "http://localhost:8000/messages",
+      messageData
+    );
     return response.data;
   } catch (error) {
-    console.error('Erro ao chamar a API:', error.response?.data || error.message);
     throw error;
   }
 }
 
 function parseMessageContent(content) {
   const str = content.toString();
-  
+
   try {
     const parsed = JSON.parse(str);
     return {
       message: parsed.message || parsed.text || str,
-      ...parsed
+      ...parsed,
     };
   } catch {
     return { message: str };
   }
 }
 
-async function receiveMessageService(userIdSend, userIdReceive) {
-  try {
-    // Primeiro, verifica no Redis se há mensagens em cache
-    const redisKey = `messages:${userIdSend}_${userIdReceive}`;
-    
-    let cachedMessages = [];
+async function receiveMessageService(userIdSend, userIdReceive, token) {
+  return new Promise(async (resolve, reject) => {
     try {
-      cachedMessages = await redisClient.lRange(redisKey, 0, -1);
-      if (cachedMessages && cachedMessages.length > 0) {
-        console.log('Mensagens recuperadas do Redis:', cachedMessages.length);
-        // Limpa as mensagens do cache após recuperá-las
-        await redisClient.del(redisKey);
-        return cachedMessages;
+      // 2. Autenticação
+      const authenticator = await autenticateUser(token);
+      if (!authenticator.success) {
+        return resolve({ success: false, error: "Usuário não autenticado" });
       }
-    } catch (redisErr) {
-      console.error('Erro ao acessar Redis:', redisErr);
-      // Continua mesmo com erro no Redis
-    }
 
-    // Se não encontrou no Redis, verifica no RabbitMQ
-    return new Promise((resolve, reject) => {
+      // 3. Verifica cache no Redis
+      const redisKey = `messages:${userIdSend}_${userIdReceive}`;
+      let cachedMessages = [];
+
+      try {
+        cachedMessages = await redisClient.lRange(redisKey, 0, -1);
+        if (cachedMessages.length > 0) {
+          return resolve({
+            success: true,
+            data: cachedMessages,
+            source: "redis",
+          });
+        }
+      } catch (redisErr) {}
+
+      // 4. Busca mensagens no RabbitMQ
       connectRabbitMQ(async (error, channel) => {
         if (error) {
-          console.error('Erro ao conectar no RabbitMQ:', error);
-          reject(error);
-          return;
+          return reject({ success: false, error: "Erro no RabbitMQ" });
         }
 
         const queueName = `${userIdSend}_${userIdReceive}`;
+
         channel.assertQueue(queueName, { durable: true }, async (err) => {
           if (err) {
             channel.close();
-            reject(err);
-            return;
+            return reject({ success: false, error: "Erro ao declarar fila" });
           }
-          
+
           channel.get(queueName, { noAck: true }, async (err, msg) => {
             channel.close();
-            
+
             if (err) {
-              reject(err);
-            } else if (msg) {
-              console.log("Mensagem recebida:", msg.content.toString());
-              
+              return reject({
+                success: false,
+                error: "Erro ao receber mensagem",
+              });
+            }
+
+            if (!msg) {
+              return resolve({
+                success: true,
+                data: [],
+                source: "rabbitmq",
+                message: "Nenhuma mensagem na fila",
+              });
+            }
+
+            try {
+              // Processa a mensagem
+              const messageContent = parseMessageContent(msg.content);
+              const messageData = {
+                message: messageContent.message,
+                user_id_send: parseInt(userIdSend),
+                user_id_receive: parseInt(userIdReceive),
+                timestamp: messageContent.timestamp || new Date().toISOString(),
+              };
+
+              // Armazena no Redis
               try {
-                const messageContent = parseMessageContent(msg.content);
-                const messageData = {
-                  message: messageContent.message,
-                  user_id_send: parseInt(userIdSend),
-                  user_id_receive: parseInt(userIdReceive),
-                  timestamp: messageContent.timestamp || new Date().toISOString()
-                };
+                await redisClient.rPush(redisKey, msg.content.toString());
+                await redisClient.expire(redisKey, 120);
+              } catch (redisErr) {}
 
-                // Armazena no Redis
-                try {
-                  await redisClient.rPush(redisKey, msg.content.toString());
-                  await redisClient.expire(redisKey, 86400); // Expira em 24 horas
-                } catch (redisErr) {
-                  console.error('Erro ao armazenar no Redis:', redisErr);
-                }
+              // Chama API externa
+              await callMessageAPI(messageData);
 
-                await callMessageAPI(messageData);
-                resolve(msg.content.toString());
-              } catch (error) {
-                console.error('Erro ao processar mensagem:', {
-                  error: error.message,
-                  stack: error.stack
-                });
-                reject(error);
-              }
-            } else {
-              resolve(null);
+              resolve({
+                success: true,
+                data: [msg.content.toString()],
+                source: "rabbitmq",
+              });
+            } catch (error) {
+              reject({
+                success: false,
+                error: "Erro ao processar mensagem",
+                details: error.message,
+              });
             }
           });
         });
       });
-    });
-  } catch (error) {
-    console.error('Erro no receiveMessageService:', error);
-    throw error;
-  }
+    } catch (error) {
+      reject({
+        success: false,
+        error: "Erro interno",
+        details: error.message,
+      });
+    }
+  });
 }
 
 module.exports = { sendMessageService, receiveMessageService };
-

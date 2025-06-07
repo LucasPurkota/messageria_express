@@ -1,19 +1,112 @@
-const { sendMessageService, receiveMessageService } = require('../services/messageService');
+const {
+  sendMessageService,
+  receiveMessageService,
+} = require("../services/messageService");
 
-exports.sendMessageController = (req, res) => {
+exports.sendMessageController = async (req, res) => {
+  try {
+    const token = req.headers.authorization?.replace("Bearer ", "");
 
-  sendMessageService(req.body.message, req.body.userIdSend, req.body.userIdReceive);
-  
-  res.status(200).json({
-    message: "Mesage sended with success"
-  });
-}
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: "Token de autenticação não fornecido",
+      });
+    }
 
-exports.receiveMessage = (req, res) => {
+    if (!req.body.message || !req.body.userIdSend || !req.body.userIdReceive) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Parâmetros incompletos (message, userIdSend, userIdReceive são obrigatórios)",
+      });
+    }
 
-  receiveMessageService(req.body.userIdSend, req.body.userIdReceive);
+    const result = await sendMessageService(
+      req.body.message,
+      req.body.userIdSend,
+      req.body.userIdReceive,
+      token
+    );
 
-  res.status(200).json({
-    message: "Message received successfully"
-  });
-}
+    if (!result.success) {
+      if (result.error === "Usuário não autenticado") {
+        return res.status(401).json({
+          success: false,
+          error: result.error,
+        });
+      }
+      return res.status(result.statusCode || 400).json({
+        success: false,
+        error: result.error || "Erro ao enviar mensagem",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: "Message sent successfully",
+    });
+  } catch (error) {
+    console.error("Erro no controller:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Erro interno no servidor",
+      details:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+exports.receiveMessage = async (req, res) => {
+  try {
+
+    const token = req.headers.authorization?.replace("Bearer ", "");
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: "Token de autenticação não fornecido",
+      });
+    }
+
+    if (!req.body.userIdSend || !req.body.userIdReceive) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Parâmetros incompletos (userIdSend, userIdReceive são obrigatórios)",
+      });
+    }
+
+    result = await receiveMessageService(
+      req.body.userIdSend,
+      req.body.userIdReceive,
+      token
+    );
+
+    if (!result.success) {
+      if (result.error === "Usuário não autenticado") {
+        return res.status(401).json({
+          success: false,
+          error: result.error,
+        });
+      }
+      return res.status(result.statusCode || 400).json({
+        success: false,
+        error: result.error || "Erro ao enviar mensagem",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: "Message received successfully",
+    });
+  } catch (error) {
+    console.error("Erro no controller:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Erro interno no servidor",
+      details:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
