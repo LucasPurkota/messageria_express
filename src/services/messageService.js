@@ -6,9 +6,9 @@ let redisClient;
 (async () => {
   redisClient = createClient({
     socket: {
-    host: process.env.REDIS_HOST || 'redis',
-    port: process.env.REDIS_PORT || 6379
-  }
+      host: process.env.REDIS_HOST || 'localhost',
+      port: process.env.REDIS_PORT || 6379
+    }
   });
   redisClient.on("error", (err) => console.error("Redis Client Error", err));
   await redisClient.connect();
@@ -137,7 +137,7 @@ async function receiveMessageService(userIdSend, userIdReceive, token) {
             source: "redis",
           });
         }
-      } catch (redisErr) {}
+      } catch (redisErr) { }
 
       // 4. Busca mensagens no RabbitMQ
       connectRabbitMQ(async (error, channel) => {
@@ -186,7 +186,7 @@ async function receiveMessageService(userIdSend, userIdReceive, token) {
               try {
                 await redisClient.rPush(redisKey, msg.content.toString());
                 await redisClient.expire(redisKey, 120);
-              } catch (redisErr) {}
+              } catch (redisErr) { }
 
               // Chama API externa
               await callMessageAPI(messageData);
@@ -216,4 +216,23 @@ async function receiveMessageService(userIdSend, userIdReceive, token) {
   });
 }
 
-module.exports = { sendMessageService, receiveMessageService };
+async function listMessagesService(userIdSend, userIdReceive, token) {
+  try {
+    const authenticator = await autenticateUser(token);
+    if (!authenticator.success) {
+      return { success: false, error: "Usuário não autenticado" };
+    }
+
+    const response = await axios.get(
+      `http://localhost:8000/messages/${userIdSend}/${userIdReceive}`
+    );
+
+    return {success: true, data: response.data}
+  } catch (error){
+    return {
+      success: false, error: error
+    }
+  }
+}
+
+module.exports = { sendMessageService, receiveMessageService, listMessagesService };
