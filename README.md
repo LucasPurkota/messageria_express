@@ -16,7 +16,8 @@ npm install
 ```
 3. Install and run Redis image in docker
 ```bash
-
+docker pull redis
+docker run -d -p 6379:6379 --name my-redis redis
 ```
 5. Instal and run RabbitMQ image in docker
 ```bash
